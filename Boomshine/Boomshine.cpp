@@ -12,8 +12,8 @@
 
 #define window_x 600 // graphical window's width
 #define window_y 500 // graphical window's height
-#define ball_size 10 // default radius of balls
-#define move_acc 0.1 // move accuracy used in moving, extending, and shrinking
+#define ball_radius 10 // default radius of balls
+#define dt 0.3 // move accuracy used in moving, extending, and shrinking
 #define click event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left // if's true statement when the user clicks
 #define PI 3.14159265 // the pi number
 
@@ -27,7 +27,7 @@ RenderWindow window(VideoMode(window_x, window_y), "Boomshine!");
 /* ball struct is sfml's CircleShape class with some add features*/
 typedef struct ball{
 	CircleShape shape;
-	double move_x = 1, move_y = 1;
+	double dx = 1, dy = 1 , dr = 0;
 	int duration = -1;
 
 	/* Default ball Constructor
@@ -41,18 +41,18 @@ typedef struct ball{
 		shape.setFillColor(Color((float)(rand() % 255), (float)(rand() % 255), (float)(rand() % 255)));
 
 		//circle shape
-		shape.setRadius(ball_size);
+		shape.setRadius(ball_radius);
 
 		// move direction
 		if (rand() % 2 == 0)
-			move_x = -1;
+			dx = -1;
 		else
-			move_x = 1;
+			dx = 1;
 
 		if (rand() % 2 == 0)
-			move_y = -1;
+			dy = -1;
 		else
-			move_y = 1;
+			dy = 1;
 	}
 
 	/* ball Constructor for the clicked ball
@@ -67,7 +67,12 @@ typedef struct ball{
 		shape.setFillColor(Color((float)(rand() % 256), (float)(rand() % 256), (float)(rand() % 256)));
 
 		//circle shape
-		shape.setRadius(ball_size);
+		shape.setRadius(ball_radius);
+
+		//Extending State
+		dr = 1;
+		dx = 0;
+		dy = 0;
 	}
 
 	/* Keeping the ball is inside the window
@@ -76,37 +81,43 @@ typedef struct ball{
 
 		This function is called by the customized move function*/
 	void keepInside() {
-		int right = shape.getPosition().x + move_acc < window_x - ball_size * 2;
-		int left = shape.getPosition().x + move_acc > 0;
-		int down = shape.getPosition().y + move_acc < window_y - ball_size * 2;
-		int up = shape.getPosition().y + move_acc > 0;
+		int right = shape.getPosition().x + dt < window_x - ball_radius * 2;
+		int left = shape.getPosition().x + dt > 0;
+		int down = shape.getPosition().y + dt < window_y - ball_radius * 2;
+		int up = shape.getPosition().y + dt > 0;
 
 		if (!down || !up) {
-			move_y *= -1;
-		//	cout << "x: " << shape.getPosition().x << "y: " << shape.getPosition().y << endl;
+			dy *= -1;
 		}
 		if (!right || !left){
-			move_x *= -1;
-		//	cout << "x: " << shape.getPosition().x << "y: " << shape.getPosition().y << endl;
+			dx *= -1;
 		}
 	}
 
-	// Customized shape.setPosition() which checks keepInside() as well
+	/* Customized shape.setPosition() which checks keepInside() as well
+		Int the case the ball is in the extension state it will be resized*/
 	void move() {
-		//shape.move(move_acc * move_x, move_acc * move_y);
-		shape.setPosition(move_acc * move_x + shape.getPosition().x, move_acc * move_y + shape.getPosition().y);
+
+		shape.setPosition(dt * dx + shape.getPosition().x, dt * dy + shape.getPosition().y);
+		
+		time_t now = time(0);
+		
+		// Extension Completed!
+		if (shape.getRadius() >= ball_radius * 4 && dr ==1) {
+			dr = 0;
+			duration = now;
+		}
+		
+		// Shrink start!
+		if (now - duration >= 1.5 && duration != -1) {
+			dr = -1;
+		}
+		
+		shape.setRadius(shape.getRadius() + dt * dr);
+
 		keepInside();
 	}
 
-	// extending the ball
-	void extend() {
-		shape.setRadius(shape.getRadius() + move_acc/10);
-	}
-
-	// shrinking the ball
-	void shrink() {
-		shape.setRadius(shape.getRadius() - move_acc );
-	}
 } Ball;
 
 /* checking if two balls have intersection
@@ -114,7 +125,7 @@ typedef struct ball{
 	intersection is checked through the following formula:
 	|r2-r1| <= d <= r1 + r2
 	where d is the distance between the two centers*/
-int intersect(Ball* const b1 , Ball* const b2) {
+int haveIntersect(Ball* const b1 , Ball* const b2) {
 	double d = sqrt(pow( (*b1).shape.getPosition().x - (*b2).shape.getPosition().x , 2) + pow((*b1).shape.getPosition().y - (*b2).shape.getPosition().y, 2));
 	
 	if (d < (*b1).shape.getRadius() + (*b2).shape.getRadius() && abs((*b1).shape.getRadius() - (*b2).shape.getRadius()) < d)
@@ -130,10 +141,7 @@ If the above happened it will return 1 so we can visualize it
 otherwise 1 will be returned.*/
 int checkIntersection(ball* b , vector<Ball> & extended_balls , vector<Ball> & balls , int b_position) {
 	for (int i = 0; i < extended_balls.size(); i++){
-		if (intersect(b, &extended_balls[i]) == 1) {//they have intersection
-		//	cout << "Some intersection" << endl;
-			extended_balls.push_back(*b); // adding b to extended_balls
-			balls.erase(balls.begin() + b_position); // removing b from balls
+		if (haveIntersect(b, &extended_balls[i]) == 1) {//they have intersection
 			return 1; // b should be extended if 1 was returned
 		}
 	}
@@ -147,27 +155,32 @@ void drawBalls(vector<Ball> & balls, vector<Ball> & extended_balls) {
 	for (int i = 0; i < extended_balls.size(); i++) // drawing the extended balls
 		window.draw(extended_balls[i].shape);
 	window.display();
-	sleep(milliseconds(.8f));
+	sleep(milliseconds(1.f));
 }
 
 void moveBalls(vector<Ball> & balls, vector<Ball> & extended_balls , int * wonballs) {
-	for (int i = 0; i < balls.size(); i++) {
+	for (int i = 0; i < balls.size() + extended_balls.size(); i++) {
 
 		// moving ball i
-		balls[i].move();
+		if (i < balls.size()) {
+			balls[i].move();
+			// checking the intersection for this movement
+			if (checkIntersection(&balls[i], extended_balls, balls, i) == 1 && extended_balls.size() != 0) { // It has intersection
+				extended_balls.push_back(balls[i]); // adding b to extended_balls
+				balls.erase(balls.begin() + i); // removing b from balls
 
-		// checking the intersection for this movement
-		if (checkIntersection(&balls[i], extended_balls, balls, i) == 1 && extended_balls.size() != 0) { // It has intersection
-			(*wonballs)++;
-			// Extending the ball while keeping the other balls moving
-			while (extended_balls.back().shape.getRadius() < ball_size * 4) {
-				extended_balls.back().extend();
+				extended_balls.back().dr = 1;
+				extended_balls.back().dx = 0;
+				extended_balls.back().dy = 0;
 
-				// Keeping other balls moving
-				moveBalls(balls, extended_balls, wonballs);
+				(*wonballs)++;
 			}
-			time_t now = time(0);
-			extended_balls.back().duration = now;
+		}
+
+		if (i < extended_balls.size()) {
+			extended_balls[i].move();
+			if (extended_balls[i].shape.getRadius() <= 0)
+				extended_balls.erase(extended_balls.begin() + i);
 		}
 	}
 	drawBalls(balls, extended_balls);
@@ -178,7 +191,7 @@ int main()
 	// Initializing the window and some other things...
 	
 	srand(time(NULL));
-	int level = 1;
+	int level = 1 , score = 0;
 	vector<Ball> balls;
 	vector<Ball> extended_balls;
 
@@ -200,36 +213,11 @@ int main()
 			// Moving the balls
 			moveBalls(balls, extended_balls , &wonballs);
 
-			// Checking for shrinking
-			time_t now = time(0);
-			for (int i = 0; i < extended_balls.size(); i++) {
-				if (now - extended_balls[i].duration >= 1) {
-					while (extended_balls[i].shape.getRadius() >= 0) {
-						extended_balls[i].shrink();
-
-						// Moving the balls
-						moveBalls(balls, extended_balls, &wonballs);
-					}
-					extended_balls.erase(extended_balls.begin() + i); // shrinkg has finished and the ball is removed
-				}
-			}
-				
 			// mouse clicked!
 			while (window.pollEvent(event) && clicked != 1) {
 				if (click) {
 					clicked = 1; // not letting more clicks 
-
 					extended_balls.push_back(ball(event.mouseButton.x, event.mouseButton.y)); // Initializing a ball in the clicked position
-					
-					// Extending the clicked ball while keeping the other balls moving 
-					while (extended_balls.back().shape.getRadius() < ball_size * 4) {
-						extended_balls.back().extend();
-
-						// Moving the balls
-						moveBalls(balls, extended_balls, &wonballs);
-					}
-					time_t now = time(0);
-					extended_balls.back().duration = now;
 				}
 			}
 
@@ -241,7 +229,8 @@ int main()
 		// Displaying the result
 		if (wonballs >= level) {
 			system("cls");
-			cout << "Well done! You finished this level! Keep going!";
+			score += wonballs;
+			cout << "Well done! You finished this level! Keep going!" << endl << "Your current score is: " << score;
 			level++;
 		}
 		else {
